@@ -99,7 +99,8 @@ export function calcDay({ head, members, rates, shifts = [], shiftPos = 'Бой'
   return members.map(m => {
     const rule = rates[m.dayPos];
     let amt;
-    if (useShifts && m.dayPos === shiftPos && rule && rule.type === 'perHead') {
+    if (head === 0 && !(rule && rule.type === 'fixed')) amt = 0;   // мал ороогүй өдөр зөвхөн тогтмол цалинтай ажил цалинтай
+    else if (useShifts && m.dayPos === shiftPos && rule && rule.type === 'perHead') {
       amt = 0;
       shifts.forEach(s => {
         if (s.wids.includes(m.wid)) amt += Math.floor((s.head * rule.rate / Math.max(s.wids.length, 1)) / 1000) * 1000;
