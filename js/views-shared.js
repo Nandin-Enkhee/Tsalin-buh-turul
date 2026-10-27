@@ -21,10 +21,29 @@ export function animalTable(stats) {
   const rows = stats.filter(x => x.head || x.buys);
   if (!rows.length) return `<p class="muted">Энэ хугацаанд мал орсон, худалдан авалт бүртгэгдээгүй байна.</p>`;
   return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Төрөл</th><th class="num">Орсон мал (толгой)</th><th class="num">Худалдан авсан</th><th class="num">Авсан дүн (₮)</th></tr></thead><tbody>
-    ${rows.map(x => `<tr><td><b>${esc(x.name)}</b></td><td class="num">${x.head ? fmt(x.head) : '<span class="faint">·</span>'}${x.workDays ? `<div class="faint" style="font-size:11.5px">${x.workDays} өдөр</div>` : ''}</td>
-      <td class="num">${x.kg ? `${fmt(x.kg)} кг` : ''}${x.kg && x.pcs ? '<br>' : ''}${x.pcs ? `${fmt(x.pcs)} ширхэг` : ''}${!x.kg && !x.pcs ? '<span class="faint">·</span>' : ''}</td>
+    ${rows.map(x => `<tr><td><b>${esc(x.name)}</b></td><td class="num">${x.head ? `<a href="#" class="adet" data-sp="${esc(x.id)}" data-k="head" style="color:inherit;text-decoration:underline dotted;text-underline-offset:3px">${fmt(x.head)}</a>` : '<span class="faint">·</span>'}${x.workDays ? `<div class="faint" style="font-size:11.5px">${x.workDays} өдөр</div>` : ''}</td>
+      <td class="num">${x.buys ? `<a href="#" class="adet" data-sp="${esc(x.id)}" data-k="buy" style="color:inherit;text-decoration:underline dotted;text-underline-offset:3px">${x.kg ? `${fmt(x.kg)} кг` : ''}${x.kg && x.pcs ? '<br>' : ''}${x.pcs ? `${fmt(x.pcs)} ширхэг` : ''}</a>` : '<span class="faint">·</span>'}</td>
       <td class="num">${x.amt ? fmt(x.amt) : '<span class="faint">·</span>'}</td></tr>`).join('')}
     </tbody></table></div>`;
+}
+
+/** «Малын тоо» хүснэгтийн тоон дээр дарахад задаргаа харуулна. */
+export function bindAnimalDetail(box, getRange) {
+  box.addEventListener('click', e => {
+    const a = e.target.closest('a.adet'); if (!a) return;
+    e.preventDefault();
+    const { from, to } = getRange(), id = a.dataset.sp, name = spName(id);
+    const per = `${from.replaceAll('-', '.')} – ${to.replaceAll('-', '.')}`;
+    if (a.dataset.k === 'head') {
+      const ds = state.days.filter(d => d.speciesId === id && d.date >= from && d.date <= to).sort((x, y) => x.date < y.date ? -1 : 1);
+      const rows = ds.map(d => `<tr><td>${d.date.replaceAll('-', '.')}</td><td class="num">${fmt(d.head || 0)}</td></tr>`).join('');
+      modal({ title: `${name} — орсон мал`, body: `<p class="sub">${per}</p><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Огноо</th><th class="num">Толгой</th></tr></thead><tbody>${rows}</tbody></table></div>` });
+    } else {
+      const ps = state.purchases.filter(p => p.speciesId === id && p.date >= from && p.date <= to).sort((x, y) => x.date < y.date ? -1 : 1);
+      const rows = ps.map(p => `<tr><td>${p.date.replaceAll('-', '.')}</td><td>${esc(p.seller || '')}</td><td class="num">${fmt(p.qty)} ${p.unit === 'kg' ? 'кг' : 'ширхэг'}</td><td class="num">${fmt(p.price || 0)}</td><td class="num">${fmt(p.total || 0)}</td></tr>`).join('');
+      modal({ title: `${name} — худалдан авсан`, body: `<p class="sub">${per}</p><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Огноо</th><th>Хэнээс</th><th class="num">Тоо</th><th class="num">Нэгж үнэ</th><th class="num">Дүн (₮)</th></tr></thead><tbody>${rows}</tbody></table></div>` });
+    }
+  });
 }
 
 /* =============================== НЭГТГЭЛ =============================== */
@@ -42,7 +61,9 @@ export function summaryView() {
     draw();
   }
 
+  let bound = false;
   function draw() {
+    if (!bound) { bound = true; bindAnimalDetail(root.querySelector('#animalBox'), () => S); }
     const box = root.querySelector('#sumTbl');
     const an = buildAnimalStats({ days: state.days, purchases: state.purchases, config: state.config, from: S.from, to: S.to }).filter(x => S.sp === 'all' || x.id === S.sp);
     root.querySelector('#animalBox').innerHTML = `<div class="card-head"><div><h2>Малын тоо</h2><p class="sub">${S.from.replaceAll('-', '.')} – ${S.to.replaceAll('-', '.')} хугацаанд орсон мал болон гаднаас худалдан авсан.</p></div></div>${animalTable(an)}`;
