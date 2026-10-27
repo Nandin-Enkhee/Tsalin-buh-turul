@@ -1,9 +1,10 @@
 // Хоёр сайтад (нягтлан, админ) хуваалцдаг дэлгэцүүд: Нэгтгэл, Цалингийн хуудас, Үнэлгээ (харах)
-import { state } from './store.js';
+import * as store from './store.js';
+const { state } = store;
 import {
   buildSummary, buildPayslip, fmt, shortDate, monthRange, shiftMonth, todayStr, ruleText, monthOf, pad, posIndex
 } from './core.js';
-import { esc, icon, toast } from './ui.js';
+import { esc, icon, toast, modal, confirmBox, needOnline } from './ui.js';
 
 const halfMonth = (ym, second) => {
   const { to } = monthRange(ym);
@@ -211,6 +212,146 @@ export function ratesReadView() {
         ${c.positions.map(p => `<tr><td><span class="chip primary">${esc(p)}</span></td>${c.species.map(s => `<td class="num" style="text-align:left">${ruleText(c.rates[s.id]?.[p])}</td>`).join('')}</tr>`).join('')}
         </tbody></table></div>
         <p class="hint">Үнэлгээ өөрчлөгдвөл зөвхөн дараа бодогдох цалинд нөлөөлнө — баталгаажсан өдрүүд хэвээр үлдэнэ.</p></div>`;
+    }
+  };
+}
+
+/* ============================ ХУДАЛДАН АВАЛТ ============================ */
+/** Гаднаас худалдан авсан мах (кг-аар) эсвэл мал (ширхэгээр). admin=true бол шууд устгана, үгүй бол админаас хүсэлт илгээнэ. */
+export function purchasesView({ admin = false } = {}) {
+  const F = { ...(() => { const ym = monthOf(todayStr()); return { from: `${ym}-01`, to: monthRange(ym).to }; })(), sp: 'all' };
+  const N = { unit: 'kg' };
+  let root;
+  const unitName = u => (u === 'kg' ? 'кг' : 'ширхэг');
+  const rq = p => state.requests.find(r => r.id === 'purchase_' + p.id)?.status;
+
+  function calcTotal() {
+    const q = +root.querySelector('#pQ').value || 0, pr = +root.querySelector('#pP').value || 0;
+    root.querySelector('#pT').value = q > 0 && pr > 0 ? Math.round(q * pr) : '';
+  }
+  function draw() {
+    const list = state.purchases.filter(p => p.date >= F.from && p.date <= F.to && (F.sp === 'all' || p.speciesId === F.sp))
+      .sort((a, b) => b.date.localeCompare(a.date));
+    const by = {};
+    list.forEach(p => {
+      const o = (by[p.speciesId] ||= { name: p.speciesName || spName(p.speciesId), kg: 0, pcs: 0, sum: 0 });
+      if (p.unit === 'kg') o.kg += +p.qty || 0; else o.pcs += +p.qty || 0;
+      o.sum += +p.total || 0;
+    });
+    const all = Object.values(by);
+    root.querySelector('#pSum').innerHTML = all.length
+      ? `<div class="stats">${all.map(o => `<div class="stat"><div class="k">${esc(o.name)}</div><div class="v" style="font-size:17px">${o.kg ? `${fmt(o.kg)} кг` : ''}${o.kg && o.pcs ? ' · ' : ''}${o.pcs ? `${fmt(o.pcs)} ширхэг` : ''}</div><div class="k" style="margin-top:2px">${fmt(o.sum)} ₮</div></div>`).join('')}
+        <div class="stat"><div class="k">Нийт дүн</div><div class="v">${fmt(all.reduce((a, o) => a + o.sum, 0))}<small> ₮</small></div></div></div>` : '';
+    root.querySelector('#pBody').innerHTML = list.length ? list.map(p => `<tr>
+      <td>${esc(p.date)}</td><td><span class="chip info">${esc(p.speciesName || spName(p.speciesId))}</span></td>
+      <td class="num">${fmt(p.qty)} ${unitName(p.unit)}</td><td class="num">${fmt(p.price)}</td><td class="num"><b>${fmt(p.total)}</b></td>
+      <td style="white-space:normal;min-width:120px">${esc(p.seller || '')}${p.note ? `<div class="faint" style="font-size:12px">${esc(p.note)}</div>` : ''}</td>
+      <td class="num"><button class="btn btn-ghost btn-sm" data-pdel="${esc(p.id)}" aria-label="Устгах" title="${admin ? 'Устгах' : rq(p) === 'approved' ? 'Админ зөвшөөрсөн — устгах' : rq(p) === 'pending' ? 'Хүсэлт хүлээгдэж байна' : 'Устгах хүсэлт илгээх'}">${icon('trash')}${!admin && rq(p) === 'approved' ? ' <small>Зөвшөөрсөн</small>' : !admin && rq(p) === 'pending' ? ' <small>Хүлээгдэж буй</small>' : ''}</button></td></tr>`).join('')
+      : `<tr><td colspan="7" class="empty">Энэ хугацаанд худалдан авалт бүртгэгдээгүй байна.</td></tr>`;
+  }
+  async function add() {
+    if (!needOnline()) return;
+    const sp = root.querySelector('#pS').value, qty = +root.querySelector('#pQ').value, price = +root.querySelector('#pP').value;
+    const date = root.querySelector('#pD').value || todayStr();
+    let total = Math.round(+root.querySelector('#pT').value || 0);
+    if (!state.config.species.some(s => s.id === sp)) { toast('Малын төрөл сонгоно уу', 'bad'); return; }
+    if (!(qty > 0)) { toast(N.unit === 'kg' ? 'Жинг (кг) оруулна уу' : 'Ширхэгийн тоог оруулна уу', 'bad'); return; }
+    if (!(price > 0) && !(total > 0)) { toast('Нэгж үнэ эсвэл нийт дүнг оруулна уу', 'bad'); return; }
+    if (!admin && (state.config.closedMonths || []).includes(monthOf(date))) { toast('Энэ сар хаагдсан байна', 'bad'); return; }
+    if (!(total > 0)) total = Math.round(qty * price);
+    const unitPrice = price > 0 ? Math.round(price) : Math.round(total / qty);
+    try {
+      await store.addPurchase({ date, speciesId: sp, speciesName: spName(sp), unit: N.unit, qty, price: unitPrice, total, seller: root.querySelector('#pW').value.trim(), note: root.querySelector('#pN').value.trim() });
+      ['#pQ', '#pP', '#pT', '#pW', '#pN'].forEach(i => { root.querySelector(i).value = ''; });
+      toast('Худалдан авалт бүртгэгдлээ');
+    } catch (e) { console.error(e); toast('Хадгалж чадсангүй: ' + (e.code || e.message), 'bad'); }
+  }
+  async function del(id) {
+    const p = state.purchases.find(x => x.id === id); if (!p || !needOnline()) return;
+    const desc = `${esc(p.date)} · ${esc(p.speciesName || '')} · ${fmt(p.qty)} ${unitName(p.unit)} · ${fmt(p.total)}₮`;
+    const rid = 'purchase_' + p.id, st = rq(p);
+    if (admin || st === 'approved') {
+      if (!(await confirmBox('Худалдан авалт устгах', `${desc} — бүртгэл устна.`, 'Устгах', true))) return;
+      try { await store.deletePurchase(p.id); if (!admin) await store.useEdit(rid); toast('Устгагдлаа'); } catch (e) { console.error(e); toast('Устгаж чадсангүй: ' + (e.code || e.message), 'bad'); }
+      return;
+    }
+    if (st === 'pending') { toast('Устгах хүсэлт админы зөвшөөрлийг хүлээж байна'); return; }
+    const reason = await modal({
+      title: 'Худалдан авалт устгах хүсэлт',
+      body: `<p class="muted">${desc}. Устгахын тулд админы зөвшөөрөл хэрэгтэй.</p><label class="f" for="rsn">Яагаад устгах вэ?</label><textarea class="inp" id="rsn" rows="3" maxlength="300"></textarea>`,
+      actions: [{ label: 'Болих', value: null }, { label: 'Хүсэлт илгээх', kind: 'primary', value: back => back.querySelector('#rsn').value.trim() || '' }]
+    });
+    if (reason === null) return;
+    if (!reason) { toast('Шалтгаанаа бичнэ үү', 'bad'); return; }
+    try { await store.requestEdit(rid, { kind: 'purchase', date: p.date, label: `Худалдан авалт: ${p.speciesName}`, speciesName: `Худалдан авалт · ${fmt(p.total)}₮`, reason }); toast('Хүсэлт админд илгээгдлээ'); }
+    catch (e) { console.error(e); toast('Илгээж чадсангүй: ' + (e.code || e.message), 'bad'); }
+  }
+  function exportXlsx() {
+    if (!window.XLSX) { toast('Excel сан ачаалагдаагүй байна. Интернэтээ шалгана уу.', 'bad'); return; }
+    const list = state.purchases.filter(p => p.date >= F.from && p.date <= F.to && (F.sp === 'all' || p.speciesId === F.sp)).sort((a, b) => a.date.localeCompare(b.date));
+    if (!list.length) { toast('Экспортлох өгөгдөл алга', 'bad'); return; }
+    const aoa = [[state.config.companyName], [`Худалдан авалтын тайлан ${F.from.replaceAll('-', '.')} – ${F.to.replaceAll('-', '.')}`], [],
+      ['Д/Д', 'Огноо', 'Төрөл', 'Хэмжээ', 'Нэгж', 'Нэгж үнэ', 'Нийт дүн', 'Хэнээс', 'Тэмдэглэл']];
+    list.forEach((p, i) => aoa.push([i + 1, p.date, p.speciesName || spName(p.speciesId), p.qty, unitName(p.unit), p.price, p.total, p.seller || '', p.note || '']));
+    aoa.push(['', 'Нийт', '', '', '', '', list.reduce((a, p) => a + (+p.total || 0), 0)]);
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 5 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 9 }, { wch: 11 }, { wch: 14 }, { wch: 20 }, { wch: 24 }];
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Худалдан авалт');
+    XLSX.writeFile(wb, `Худалдан_авалт_${F.from}_${F.to}.xlsx`);
+    toast('Excel файл татагдлаа');
+  }
+  return {
+    title: 'Худалдан авалт',
+    mount(r) {
+      root = r;
+      root.innerHTML = `
+        <div class="page-head"><h1>Худалдан авалт</h1><p>Гаднаас худалдан авсан мах (кг-аар), эсвэл мал (ширхэгээр) бүртгэнэ.</p></div>
+        <div class="card"><div class="card-head"><div><h2>Шинэ худалдан авалт</h2></div></div>
+          <div class="fgrid">
+            <div><label class="f">Огноо</label><input class="inp" type="date" id="pD" value="${todayStr()}"></div>
+            <div><label class="f">Төрөл</label><select class="inp" id="pS"></select></div>
+            <div><label class="f">Хэмжээний нэгж</label><div class="seg" id="pU"><button data-unit="kg" class="on">Кг (мах)</button><button data-unit="pcs">Ширхэг (мал)</button></div></div>
+            <div><label class="f" id="pQL">Жин (кг)</label><input class="inp right" id="pQ" type="number" min="0" step="any" inputmode="decimal" placeholder="420"></div>
+            <div><label class="f" id="pPL">Нэгж үнэ (₮ / кг)</label><input class="inp right" id="pP" type="number" min="0" inputmode="numeric" placeholder="9500"></div>
+            <div><label class="f">Нийт дүн (₮)</label><input class="inp right" id="pT" type="number" min="0" inputmode="numeric" placeholder="автоматаар"></div>
+            <div><label class="f">Хэнээс авсан</label><input class="inp" id="pW" placeholder="Заавал биш"></div>
+            <div><label class="f">Тэмдэглэл</label><input class="inp" id="pN" placeholder="Заавал биш"></div>
+          </div>
+          <div class="hint">Нийт дүн = хэмжээ × нэгж үнэ гэж автоматаар бодогдоно. Бөөндөө тохирсон үнэтэй бол нийт дүнг гараар бичиж болно.</div>
+          <div class="mt"><button class="btn btn-primary" data-act="padd">${icon('plus')} Бүртгэх</button></div></div>
+        <div class="card"><div class="card-head"><div><h2>Бүртгэл</h2></div>
+          <div class="row"><input class="inp sm" type="date" data-pf="from" style="width:140px" value="${F.from}"><input class="inp sm" type="date" data-pf="to" style="width:140px" value="${F.to}">
+          <select class="inp sm" data-pf="sp" id="pF" style="width:130px"></select>
+          <button class="btn btn-secondary btn-sm" data-act="pxlsx">${icon('download')} Excel</button></div></div>
+          <div id="pSum"></div>
+          <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Огноо</th><th>Төрөл</th><th class="num">Хэмжээ</th><th class="num">Нэгж үнэ</th><th class="num">Нийт (₮)</th><th>Хэнээс / тэмдэглэл</th><th></th></tr></thead><tbody id="pBody"></tbody></table></div>
+          ${admin ? '' : '<p class="hint">Буруу бүртгэсэн бол устгах хүсэлт илгээнэ — админ зөвшөөрсний дараа устгана.</p>'}</div>`;
+      root.addEventListener('click', e => {
+        const u = e.target.closest('[data-unit]');
+        if (u) {
+          N.unit = u.dataset.unit;
+          root.querySelectorAll('#pU button').forEach(b => b.classList.toggle('on', b === u));
+          root.querySelector('#pQL').textContent = N.unit === 'kg' ? 'Жин (кг)' : 'Ширхэгийн тоо';
+          root.querySelector('#pPL').textContent = N.unit === 'kg' ? 'Нэгж үнэ (₮ / кг)' : 'Нэгж үнэ (₮ / ширхэг)';
+          root.querySelector('#pQ').placeholder = N.unit === 'kg' ? '420' : '5';
+          calcTotal(); return;
+        }
+        const act = e.target.closest('[data-act]')?.dataset.act;
+        if (act === 'padd') add(); else if (act === 'pxlsx') exportXlsx();
+        const d = e.target.closest('[data-pdel]'); if (d) del(d.dataset.pdel);
+      });
+      root.addEventListener('input', e => { if (e.target.id === 'pQ' || e.target.id === 'pP') calcTotal(); });
+      root.addEventListener('change', e => { const f = e.target.dataset.pf; if (f) { F[f] = e.target.value; draw(); } });
+      this.refresh();
+    },
+    refresh() {
+      const s = root.querySelector('#pS'), cur = s.value;
+      s.innerHTML = state.config.species.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
+      if (cur) s.value = cur;
+      const f = root.querySelector('#pF');
+      f.innerHTML = `<option value="all">Бүх төрөл</option>` + state.config.species.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
+      f.value = F.sp;
+      draw();
     }
   };
 }
