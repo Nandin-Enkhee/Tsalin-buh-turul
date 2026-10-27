@@ -1,11 +1,11 @@
 // Админы сайт (имэйл/нууц үгээр нэвтэрнэ). Хяналт, календарь, ажилчид, үнэлгээний тохиргоо.
 import * as store from './store.js';
-import { fmt, todayStr, monthOf, shiftMonth, monthLabel, dayStatus, posIndex, hashPin, shortDate } from './core.js';
+import { buildAnimalStats, monthRange, fmt, todayStr, monthOf, shiftMonth, monthLabel, dayStatus, posIndex, hashPin, shortDate } from './core.js';
 import {
   esc, icon, toast, confirmBox, initTheme, mountShell, banner, needOnline, loginScreen,
   monthRibbon, ribbonLegend, scrollRibbonToToday, missingDays
 } from './ui.js';
-import { summaryView, purchasesView } from './views-shared.js';
+import { summaryView, purchasesView, animalTable } from './views-shared.js';
 
 const { state } = store;
 const app = document.getElementById('app');
@@ -24,6 +24,7 @@ async function editConfig(fn) {
 /* ================================ ХЯНАЛТ ================================ */
 function dashboardView() {
   const S = { ym: monthOf(todayStr()), sel: todayStr() };
+  const A = { ...monthRange(monthOf(todayStr())), manual: false };
   let root;
   function draw() {
     root.querySelector('#rbMonth').textContent = monthLabel(S.ym);
@@ -44,14 +45,19 @@ function dashboardView() {
       if (st === 'miss') miss++; else if (st === 'off') off++;
     }
     const total = days.reduce((s, d) => s + (d.rows || []).reduce((a, r) => a + r.amt, 0), 0);
-    const bySp = state.config.species.map(s => [s.name, days.filter(d => d.speciesId === s.id).reduce((a, d) => a + (+d.head || 0), 0)]).filter(x => x[1] > 0);
     root.querySelector('#stats').innerHTML = `
       <div class="stat"><div class="k">Баталгаажсан өдөр</div><div class="v ok">${dates.length}</div></div>
       <div class="stat"><div class="k">Шивэгдээгүй өдөр</div><div class="v ${miss ? 'bad' : ''}">${miss}</div></div>
       <div class="stat"><div class="k">Ажиллаагүй өдөр</div><div class="v">${off}</div></div>
-      <div class="stat"><div class="k">Нийт бодогдсон цалин</div><div class="v">${fmt(total)}<small> ₮</small></div></div>
-      <div class="stat"><div class="k">Нийт мал (толгой)</div><div class="v">${bySp.length ? bySp.map(([n, h]) => `<div style="font-size:15px;font-weight:600">${esc(n)}: ${fmt(h)}</div>`).join('') : '0'}</div></div>`;
+      <div class="stat"><div class="k">Нийт бодогдсон цалин</div><div class="v">${fmt(total)}<small> ₮</small></div></div>`;
 
+    // Малын тоо (орсон + худалдан авсан): сонгосон сар эсвэл гараар сонгосон хугацаагаар
+    if (!A.manual) Object.assign(A, monthRange(S.ym), {});
+    const af = root.querySelector('[data-af=from]'), at = root.querySelector('[data-af=to]');
+    if (document.activeElement !== af) af.value = A.from;
+    if (document.activeElement !== at) at.value = A.to;
+    root.querySelector('#aLabel').textContent = A.manual ? 'Гараар сонгосон хугацаа' : monthLabel(S.ym);
+    root.querySelector('#aBody').innerHTML = animalTable(buildAnimalStats({ days: state.days, purchases: state.purchases, config: state.config, from: A.from, to: A.to }));
     const pend = state.requests.filter(r => r.status === 'pending' || r.status === 'approved').sort((a, b) => a.date.localeCompare(b.date));
     root.querySelector('#reqs').innerHTML = pend.length ? `<div class="card-head"><div><h2>Засах хүсэлтүүд</h2><p class="sub">Нягтлангаас ирсэн. Зөвшөөрвөл нягтлан тухайн өдрийг нэг удаа засах/устгаж чадна.</p></div></div>
       ${pend.map(r => `<div class="reqitem">
@@ -85,6 +91,11 @@ function dashboardView() {
         <div class="page-head"><h1>Хяналт</h1><p>Сарын байдал, өдөр бүрийн цалингийн тооцоо.</p></div>
         <div id="stats" class="stats"></div>
         <div class="card" id="reqs"></div>
+        <div class="card"><div class="card-head"><div><h2>Малын тоо</h2><p class="sub" id="aLabel"></p></div>
+          <div class="row"><input class="inp sm" type="date" data-af="from" style="width:140px" aria-label="Эхлэх"><input class="inp sm" type="date" data-af="to" style="width:140px" aria-label="Дуусах">
+          <button class="btn btn-secondary btn-sm" data-act="amonth">Сонгосон сар</button></div></div>
+          <div id="aBody"></div>
+          <p class="hint">Орсон мал (нядалгаанд орсон толгой) болон гаднаас худалдан авсан мах (кг), мал (ширхэг). Доорх сарын туузаар сар сольж, эсвэл өөрийн хугацаагаа сонгож болно.</p></div>
         <div class="card"><div class="mhead"><h2 id="rbMonth"></h2>
           <button class="btn btn-secondary btn-sm" data-m="-1" aria-label="Өмнөх сар">${icon('left')}</button>
           <button class="btn btn-secondary btn-sm" data-m="0">Энэ сар</button>
@@ -95,6 +106,7 @@ function dashboardView() {
       root.addEventListener('click', async e => {
         const m = e.target.closest('[data-m]');
         if (m) { S.ym = m.dataset.m === '0' ? monthOf(todayStr()) : shiftMonth(S.ym, +m.dataset.m); draw(); return; }
+        if (e.target.closest('[data-act=amonth]')) { A.manual = false; draw(); return; }
         if (e.target.closest('[data-act=closem]')) {
           const isC = (state.config.closedMonths || []).includes(S.ym);
           if (!(await confirmBox(isC ? 'Сар нээх' : 'Сар хаах', isC ? `${monthLabel(S.ym)}-ийг нээвэл нягтлан дахин өөрчлөх боломжтой болно.` : `${monthLabel(S.ym)}-ийн цалинг хаавал нягтлан энэ сарын цалин нэмэх/засах/устгах боломжгүй болно.`, isC ? 'Нээх' : 'Хаах'))) return;
@@ -117,6 +129,7 @@ function dashboardView() {
           await store.deleteDay(rec.id); toast('Устгагдлаа');
         }
       });
+      root.addEventListener('change', e => { const f = e.target.dataset.af; if (!f || !e.target.value) return; A[f] = e.target.value; A.manual = true; if (A.from > A.to) { const t = A.from; A.from = A.to; A.to = t; } draw(); });
       draw();
     },
     refresh() { draw(); },
