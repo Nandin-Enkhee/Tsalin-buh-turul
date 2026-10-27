@@ -7,7 +7,7 @@ import {
   esc, icon, toast, modal, confirmBox, initTheme, mountShell, banner, needOnline, loginScreen,
   monthRibbon, ribbonLegend, scrollRibbonToToday, missingDays
 } from './ui.js';
-import { summaryView, payslipView, ratesReadView } from './views-shared.js';
+import { summaryView, payslipView, ratesReadView, purchasesView } from './views-shared.js';
 
 const { state } = store;
 const spName = id => state.config.species.find(s => s.id === id)?.name || id;
@@ -88,6 +88,8 @@ function entryView() {
     if (closed()) h += banner('warn', 'info', `<b>${esc(monthLabel(monthOf(S.date)))} хаагдсан.</b> Энэ сарын цалинг админ нээхээс өмнө өөрчлөх боломжгүй.`);
     if (status === 'off' && !rec) h += banner('warn', 'info', 'Энэ өдөр «ажиллаагүй өдөр» гэж тэмдэглэгдсэн. Цалин баталгаажуулбал ажилласан өдөр болно.');
     box.innerHTML = h;
+    const zh = root.querySelector('#zeroHint');
+    if (zh) zh.textContent = String(S.head).trim() === '0' ? 'Мал ороогүй өдөр: зөвхөн тогтмол цалинтай ажилтнууд (Тогооч, Үйлчлэгч гэх мэт) цалинтай бодогдоно.' : 'Мал ороогүй өдөр бол 0 гэж бичнэ.';
   }
   function drawAtt() {
     const pi = posIndex(cfg());
@@ -157,14 +159,21 @@ function entryView() {
 
   /* ---------- үйлдлүүд ---------- */
   function doCalc() {
+    if (String(S.head).trim() === '' || !(+S.head >= 0)) { toast('Тоо толгойг оруулна уу (мал ороогүй өдөр 0)', 'bad'); root.querySelector('#head').focus(); return; }
     const head = +S.head;
-    if (!(head > 0)) { toast('Тоо толгойг оруулна уу', 'bad'); root.querySelector('#head').focus(); return; }
-    const ms = members();
-    if (!ms.length) { toast('Ажилласан ажилтнаа сонгоно уу', 'bad'); return; }
     const rates = cfg().rates[S.sp];
     if (!rates) { toast(`«${spName(S.sp)}»-ийн үнэлгээ тохируулагдаагүй байна. Админд хэлнэ үү.`, 'bad'); return; }
+    let ms = members();
+    if (!ms.length) { toast('Ажилласан ажилтнаа сонгоно уу', 'bad'); return; }
+    if (head === 0) {
+      // Мал ороогүй өдөр зөвхөн тогтмол өдрийн цалинтай ажил (Тогооч, Үйлчлэгч гэх мэт) цалинтай
+      const fx = ms.filter(m => rates[m.dayPos]?.type === 'fixed');
+      if (!fx.length) { toast('Мал ороогүй өдөр тогтмол цалинтай ажилтан (Тогооч, Үйлчлэгч гэх мэт) сонгоно уу', 'bad'); return; }
+      if (fx.length < ms.length) toast(`Тогтмол цалингүй ${ms.length - fx.length} ажилтан тооцоонд ороогүй`);
+      ms = fx;
+    }
     let shifts = [];
-    if (S.shiftOn) {
+    if (S.shiftOn && head > 0) {
       const sPos = cfg().shiftPosition;
       const pool = ms.filter(m => m.dayPos === sPos).map(m => m.wid);
       shifts = S.shifts.map(s => ({ head: +s.head, wids: s.wids.filter(id => pool.includes(id)) }));
@@ -244,7 +253,7 @@ function entryView() {
           <div class="fgrid">
             <div><label class="f" for="date">Огноо</label><input class="inp" type="date" id="date" value="${S.date}"></div>
             <div><label class="f">Малын төрөл</label><div class="seg" id="spSeg"></div></div>
-            <div><label class="f" for="head">Тоо толгой</label><input class="inp big" id="head" type="number" min="0" inputmode="numeric" placeholder="ж: 74"></div>
+            <div><label class="f" for="head">Тоо толгой</label><input class="inp big" id="head" type="number" min="0" inputmode="numeric" placeholder="ж: 74"><div class="hint" id="zeroHint"></div></div>
           </div>
           <div id="note" class="mt-s"></div>
           <div class="step"><span class="n">2</span><div><h3>Ирц ба өнөөдрийн ажил</h3><p>Ажилласан хүмүүсийг сонгоно. Хэн нэгэн өөр ажил хийсэн бол хажууд нь ажлыг солино.</p></div></div>
@@ -301,7 +310,7 @@ function entryView() {
       });
       root.addEventListener('input', e => {
         const t = e.target;
-        if (t.id === 'head') { S.head = t.value; if (S.calc) { S.calc = null; drawCalc(); } }
+        if (t.id === 'head') { S.head = t.value; if (S.calc) { S.calc = null; drawCalc(); } drawNote(); }
         if (t.dataset.amt !== undefined) {
           S.calc.rows[+t.dataset.amt].amt = +t.value || 0;
           root.querySelector('#totAmt').textContent = fmt(S.calc.rows.reduce((s, r) => s + r.amt, 0)) + ' ₮';
@@ -496,10 +505,11 @@ const ITEMS = [
   { id: 'summary', label: 'Нэгтгэл · Excel', short: 'Нэгтгэл', icon: 'table' },
   { id: 'slip', label: 'Цалингийн хуудас', short: 'Хуудас', icon: 'file' },
   { id: 'debts', label: 'Суутгал', short: 'Суутгал', icon: 'wallet' },
+  { id: 'buy', label: 'Худалдан авалт', short: 'Авалт', icon: 'cart' },
   { id: 'workers', label: 'Ажилчид', short: 'Ажилчид', icon: 'users' },
   { id: 'rates', label: 'Үнэлгээ', short: 'Үнэлгээ', icon: 'tag' }
 ];
-const factories = { entry: entryView, summary: summaryView, slip: payslipView, debts: debtsView, workers: workersView, rates: ratesReadView };
+const factories = { entry: entryView, summary: summaryView, slip: payslipView, debts: debtsView, buy: () => purchasesView({ admin: false }), workers: workersView, rates: ratesReadView };
 const views = {}, panes = {};
 let current = 'entry';
 
@@ -549,7 +559,12 @@ let raf = 0;
 store.onChange(() => {
   cancelAnimationFrame(raf);
   raf = requestAnimationFrame(() => {
-    if (!state.authReady) { app.innerHTML = '<div class="login-wrap"><div class="muted">Ачаалж байна…</div></div>'; return; }
+    if (!state.authReady) {
+      app.innerHTML = state.error
+        ? `<div class="login-wrap"><div class="login"><div class="logo">ЦС</div><h1>Firebase-тэй холбогдож чадсангүй</h1><p>${esc(state.error.code || state.error.message || String(state.error))}</p><p class="hint">firebase-config.js дахь утгууд (apiKey, authDomain, projectId, appId) зөв эсэхийг шалгаад дахин ачаална уу. Дэлгэрэнгүйг F12 → Console-оос харна.</p></div></div>`
+        : '<div class="login-wrap"><div class="muted">Ачаалж байна…</div></div>';
+      return;
+    }
     if (!state.user) { if (shell || !document.getElementById('lf')) { shell = null; loginScreen(app, { title: 'Нягтлан нэвтрэх', sub: 'Цалингийн систем', signIn: store.signIn }); } return; }
     if (!shell) { mountApp(); }
     updateBanners(); views[current]?.refresh?.();
