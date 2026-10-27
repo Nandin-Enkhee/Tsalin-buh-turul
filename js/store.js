@@ -8,7 +8,7 @@ const SDK = 'https://www.gstatic.com/firebasejs/12.19.0/';
 export const state = {
   ready: false, online: true, error: null,
   config: defaultConfig(), configExists: false,
-  workers: [], days: [], offDays: [], debts: [], requests: [], audit: [],
+  workers: [], days: [], offDays: [], debts: [], requests: [], purchases: [], audit: [],
   lastAtt: {}, user: null, authReady: false
 };
 const listeners = new Set();
@@ -31,9 +31,10 @@ async function initFirebase() {
   const app = initializeApp(firebaseConfig);
   const db = fs.getFirestore(app);
   const auth = au.getAuth(app);
+  setTimeout(() => { if (!state.authReady && !state.error) { state.error = new Error('Firebase хариу өгсөнгүй (10 сек). Config утга эсвэл интернэтээ шалгана уу.'); emit(); } }, 10000);
   const { getDocs, collection, doc, onSnapshot, setDoc, addDoc, deleteDoc, writeBatch, serverTimestamp, query, orderBy, limit } = fs;
 
-  const need = new Set(['config', 'workers', 'days', 'offDays', 'debts', 'requests', 'lastAtt']);
+  const need = new Set(['config', 'workers', 'days', 'offDays', 'debts', 'requests', 'purchases', 'lastAtt']);
   const fromCache = {};
   const done = key => {
     need.delete(key);
@@ -51,7 +52,7 @@ async function initFirebase() {
       fromCache[name] = snap.metadata.fromCache;
       done(key);
     }, fail);
-    subCol('workers', 'workers'); subCol('days', 'days'); subCol('offDays', 'offDays'); subCol('debts', 'debts'); subCol('editRequests', 'requests');
+    subCol('workers', 'workers'); subCol('days', 'days'); subCol('offDays', 'offDays'); subCol('debts', 'debts'); subCol('editRequests', 'requests'); subCol('purchases', 'purchases');
 
     onSnapshot(doc(db, 'config', 'main'), snap => {
       state.configExists = snap.exists();
@@ -83,6 +84,8 @@ async function initFirebase() {
     addDebt: d => addDoc(collection(db, 'debts'), { ...d, paid: false, createdAt: ts() }),
     updateDebt: (id, patch) => setDoc(doc(db, 'debts', id), patch, { merge: true }),
     deleteDebt: id => deleteDoc(doc(db, 'debts', id)),
+    addPurchase: p => addDoc(collection(db, 'purchases'), { ...p, createdAt: ts() }),
+    deletePurchase: id => deleteDoc(doc(db, 'purchases', id)),
     checkAdmin: async () => { try { await getDocs(query(collection(db, 'audit'), limit(1))); return true; } catch (e) { return e.code === 'permission-denied' ? false : true; } },
     audit: d => addDoc(collection(db, 'audit'), { ...d, at: ts() }),
     watchAudit: () => onSnapshot(query(collection(db, 'audit'), orderBy('at', 'desc'), limit(300)),
@@ -134,6 +137,7 @@ function initDemo() {
   state.debts.push(
     { id: uid('d'), date: addDays(today, -4), wid: state.workers[1].id, name: state.workers[1].name, type: 'Хувцас', amt: 60000, paid: false },
     { id: uid('d'), date: addDays(today, -2), wid: state.workers[4].id, name: state.workers[4].name, type: 'Дэлгүүр тооцоо', amt: 35000, paid: false });
+  state.purchases.push({ id: uid('p'), date: addDays(today, -1), speciesId: 'aduu', speciesName: 'Адуу', unit: 'kg', qty: 420, price: 9500, total: 3990000, seller: 'Малчин Бат', note: 'Мах' });
   state.ready = true;
 
   const upsert = (arr, item) => { const i = arr.findIndex(x => x.id === item.id); if (i >= 0) arr[i] = { ...arr[i], ...item }; else arr.push(item); };
@@ -149,6 +153,8 @@ function initDemo() {
     addDebt: d => { state.debts.push({ id: uid('d'), paid: false, ...d }); return ok(); },
     updateDebt: (id, p) => { upsert(state.debts, { id, ...p }); return ok(); },
     deleteDebt: id => { state.debts = state.debts.filter(d => d.id !== id); return ok(); },
+    addPurchase: p => { state.purchases.push({ id: uid('p'), ...p }); return ok(); },
+    deletePurchase: id => { state.purchases = state.purchases.filter(p => p.id !== id); return ok(); },
     audit: d => { state.audit.unshift({ id: uid('a'), at: new Date().toISOString(), ...d }); return ok(); },
     checkAdmin: async () => true,
     watchAudit: () => () => {},
@@ -188,6 +194,8 @@ const LOG = {
   addDebt: d => `Суутгал нэмэв: ${d.name} · ${d.type} · ${fmt(d.amt)}₮`,
   updateDebt: (id, p) => { const d = state.debts.find(x => x.id === id); return `Суутгал өөрчиллөө: ${d?.name || ''}${p.paid === undefined ? '' : p.paid ? ' — төлсөн' : ' — төлөөгүй болгов'}`; },
   deleteDebt: id => { const d = state.debts.find(x => x.id === id); return `Суутгал устгав: ${d?.name || ''} · ${fmt(d?.amt || 0)}₮`; },
+  addPurchase: p => `Худалдан авалт нэмэв: ${p.date} · ${p.speciesName} · ${fmt(p.qty)} ${p.unit === 'kg' ? 'кг' : 'ширхэг'} · ${fmt(p.total)}₮`,
+  deletePurchase: id => { const p = state.purchases.find(x => x.id === id); return `Худалдан авалт устгав: ${p?.date || ''} · ${p?.speciesName || ''} · ${fmt(p?.total || 0)}₮`; },
   requestEdit: (id, r) => `Засах/устгах хүсэлт: ${r.label || r.date} — ${r.reason}`,
   decideEdit: (id, st) => `Хүсэлт ${st === 'approved' ? 'зөвшөөрөв' : 'татгалзав / цуцлав'}: ${id.replace('_', ' · ')}`
 };
@@ -205,6 +213,8 @@ export const saveDay = call('saveDay');
 export const deleteDay = call('deleteDay');
 export const setOffDay = call('setOffDay');
 export const addDebt = call('addDebt');
+export const addPurchase = call('addPurchase');
+export const deletePurchase = call('deletePurchase');
 export const updateDebt = call('updateDebt');
 export const deleteDebt = call('deleteDebt');
 export const requestEdit = call('requestEdit');
