@@ -172,3 +172,19 @@ export function buildPayslip({ wid, days, debts, from, to }) {
   const ded = deductions.reduce((s, q) => s + q.amt, 0);
   return { lines, total, deductions, ded, net: total - ded, workedDays: new Set(lines.map(l => l.date)).size };
 }
+
+/** Хугацаан дахь малын тоо: орсон мал (толгой), гаднаас худалдан авсан (кг, ширхэг, дүн) — төрөл тус бүрээр */
+export function buildAnimalStats({ days, purchases = [], config, from, to }) {
+  return config.species.map(s => {
+    const ds = days.filter(d => d.speciesId === s.id && d.date >= from && d.date <= to);
+    const ps = purchases.filter(p => p.speciesId === s.id && p.date >= from && p.date <= to);
+    const sum = (arr, f) => arr.reduce((a, x) => a + (+f(x) || 0), 0);
+    return {
+      id: s.id, name: s.name,
+      head: sum(ds, d => d.head), workDays: new Set(ds.map(d => d.date)).size,
+      kg: sum(ps.filter(p => p.unit === 'kg'), p => p.qty),
+      pcs: sum(ps.filter(p => p.unit !== 'kg'), p => p.qty),
+      amt: sum(ps, p => p.total), buys: ps.length
+    };
+  });
+}
