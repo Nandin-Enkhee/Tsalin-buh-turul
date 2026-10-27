@@ -2,7 +2,7 @@
 import * as store from './store.js';
 const { state } = store;
 import {
-  buildSummary, buildPayslip, fmt, shortDate, monthRange, shiftMonth, todayStr, ruleText, monthOf, pad, posIndex
+  buildSummary, buildPayslip, buildAnimalStats, fmt, shortDate, monthRange, shiftMonth, todayStr, ruleText, monthOf, pad, posIndex
 } from './core.js';
 import { esc, icon, toast, modal, confirmBox, needOnline } from './ui.js';
 
@@ -15,6 +15,17 @@ function defaultPeriod() {
   return halfMonth(ym, +t.slice(8) > 15);
 }
 const spName = id => state.config.species.find(s => s.id === id)?.name || id;
+
+/** Малын тоо (орсон + худалдан авсан) хүснэгтийн HTML. Нийт нийлбэр зориуд оруулаагүй — төрөл тус бүрээр. */
+export function animalTable(stats) {
+  const rows = stats.filter(x => x.head || x.buys);
+  if (!rows.length) return `<p class="muted">Энэ хугацаанд мал орсон, худалдан авалт бүртгэгдээгүй байна.</p>`;
+  return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Төрөл</th><th class="num">Орсон мал (толгой)</th><th class="num">Худалдан авсан</th><th class="num">Авсан дүн (₮)</th></tr></thead><tbody>
+    ${rows.map(x => `<tr><td><b>${esc(x.name)}</b></td><td class="num">${x.head ? fmt(x.head) : '<span class="faint">·</span>'}${x.workDays ? `<div class="faint" style="font-size:11.5px">${x.workDays} өдөр</div>` : ''}</td>
+      <td class="num">${x.kg ? `${fmt(x.kg)} кг` : ''}${x.kg && x.pcs ? '<br>' : ''}${x.pcs ? `${fmt(x.pcs)} ширхэг` : ''}${!x.kg && !x.pcs ? '<span class="faint">·</span>' : ''}</td>
+      <td class="num">${x.amt ? fmt(x.amt) : '<span class="faint">·</span>'}</td></tr>`).join('')}
+    </tbody></table></div>`;
+}
 
 /* =============================== НЭГТГЭЛ =============================== */
 export function summaryView() {
@@ -33,6 +44,8 @@ export function summaryView() {
 
   function draw() {
     const box = root.querySelector('#sumTbl');
+    const an = buildAnimalStats({ days: state.days, purchases: state.purchases, config: state.config, from: S.from, to: S.to }).filter(x => S.sp === 'all' || x.id === S.sp);
+    root.querySelector('#animalBox').innerHTML = `<div class="card-head"><div><h2>Малын тоо</h2><p class="sub">${S.from.replaceAll('-', '.')} – ${S.to.replaceAll('-', '.')} хугацаанд орсон мал болон гаднаас худалдан авсан.</p></div></div>${animalTable(an)}`;
     const sum = buildSummary({ days: state.days, debts: state.debts, config: state.config, from: S.from, to: S.to, speciesId: S.sp });
     const all = S.sp === 'all';
     if (!sum.rows.length) {
@@ -94,6 +107,16 @@ export function summaryView() {
       make('all', 'Нийт');
       state.config.species.forEach(s => make(s.id, s.name));
     } else make(S.sp, spName(S.sp));
+    // Малын тоо: орсон мал + худалдан авсан (хугацаагаар)
+    const an = buildAnimalStats({ days: state.days, purchases: state.purchases, config: state.config, from: S.from, to: S.to }).filter(x => (S.sp === 'all' || x.id === S.sp) && (x.head || x.buys));
+    if (an.length) {
+      const aoa = [[state.config.companyName], [`Малын тоо ${S.from.replaceAll('-', '.')} – ${S.to.replaceAll('-', '.')}`], [],
+        ['Төрөл', 'Орсон мал (толгой)', 'Ажилласан өдөр', 'Худалдан авсан мах (кг)', 'Худалдан авсан мал (ширхэг)', 'Худалдан авсан дүн (₮)']];
+      an.forEach(x => aoa.push([x.name, x.head || '', x.workDays || '', x.kg || '', x.pcs || '', x.amt || '']));
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = [{ wch: 14 }, { wch: 18 }, { wch: 15 }, { wch: 22 }, { wch: 26 }, { wch: 22 }];
+      XLSX.utils.book_append_sheet(wb, ws, 'Малын тоо');
+    }
     if (!wb.SheetNames.length) { toast('Экспортлох өгөгдөл алга', 'bad'); return; }
     XLSX.writeFile(wb, `Цалин_${S.from}_${S.to}.xlsx`);
     toast('Excel файл татагдлаа');
@@ -120,6 +143,7 @@ export function summaryView() {
             <button class="btn btn-primary" data-act="xlsx">${icon('download')} Excel татах</button>
           </div>
         </div>
+        <div class="card" id="animalBox"></div>
         <div class="card" id="sumTbl"></div>`;
       root.addEventListener('change', e => {
         const f = e.target.dataset.f; if (!f) return;
