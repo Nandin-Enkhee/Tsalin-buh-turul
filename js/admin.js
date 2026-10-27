@@ -5,7 +5,7 @@ import {
   esc, icon, toast, confirmBox, initTheme, mountShell, banner, needOnline, loginScreen,
   monthRibbon, ribbonLegend, scrollRibbonToToday, missingDays
 } from './ui.js';
-import { summaryView } from './views-shared.js';
+import { summaryView, purchasesView } from './views-shared.js';
 
 const { state } = store;
 const app = document.getElementById('app');
@@ -54,12 +54,13 @@ function dashboardView() {
 
     const pend = state.requests.filter(r => r.status === 'pending' || r.status === 'approved').sort((a, b) => a.date.localeCompare(b.date));
     root.querySelector('#reqs').innerHTML = pend.length ? `<div class="card-head"><div><h2>Засах хүсэлтүүд</h2><p class="sub">Нягтлангаас ирсэн. Зөвшөөрвөл нягтлан тухайн өдрийг нэг удаа засах/устгаж чадна.</p></div></div>
-      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Өдөр</th><th>Мал</th><th>Шалтгаан</th><th>Төлөв</th><th></th></tr></thead><tbody>
-      ${pend.map(r => `<tr><td><button class="btn btn-ghost btn-sm" data-date="${esc(r.date)}">${esc(r.date)}</button></td><td>${esc(r.speciesName || spName(r.speciesId))}${r.kind === 'debt' ? ` <span class="chip">суутгал</span>` : ''}</td><td style="white-space:normal;min-width:160px">${esc(r.reason || '')}</td>
-        <td><span class="chip ${r.status === 'approved' ? 'ok' : 'warn'}">${r.status === 'approved' ? 'Зөвшөөрсөн' : 'Хүлээгдэж буй'}</span></td>
-        <td class="num">${r.status === 'pending' ? `<button class="btn btn-primary btn-sm" data-dec="approved" data-rid="${esc(r.id)}">Зөвшөөрөх</button> <button class="btn btn-secondary btn-sm" data-dec="rejected" data-rid="${esc(r.id)}">Татгалзах</button>`
-          : `<button class="btn btn-secondary btn-sm" data-dec="rejected" data-rid="${esc(r.id)}">Эрхийг цуцлах</button>`}</td></tr>`).join('')}
-      </tbody></table></div>` : '';
+      ${pend.map(r => `<div class="reqitem">
+        <div class="row" style="flex-wrap:wrap;gap:8px"><button class="btn btn-secondary btn-sm" data-date="${esc(r.date)}">${esc(r.date)}</button>
+          <b>${esc(r.speciesName || spName(r.speciesId))}</b>${r.kind === 'debt' ? ' <span class="chip">суутгал</span>' : r.kind === 'purchase' ? ' <span class="chip">худалдан авалт</span>' : ''}
+          <span class="chip ${r.status === 'approved' ? 'ok' : 'warn'}">${r.status === 'approved' ? 'Зөвшөөрсөн' : 'Хүлээгдэж буй'}</span></div>
+        <div class="muted" style="margin:6px 0 10px">Шалтгаан: ${esc(r.reason || '')}</div>
+        <div class="row" style="gap:8px">${r.status === 'pending' ? `<button class="btn btn-primary btn-sm" data-dec="approved" data-rid="${esc(r.id)}">Зөвшөөрөх</button> <button class="btn btn-secondary btn-sm" data-dec="rejected" data-rid="${esc(r.id)}">Татгалзах</button>`
+          : `<button class="btn btn-secondary btn-sm" data-dec="rejected" data-rid="${esc(r.id)}">Эрхийг цуцлах</button>`}</div></div>`).join('')}` : '';
     const recs = state.days.filter(d => d.date === S.sel);
     const st = dayStatus(S.sel, state);
     const label = { ok: 'Баталгаажсан', pending: 'Хүлээгдэж буй', miss: 'Шивэгдээгүй', off: 'Ажиллаагүй өдөр', future: 'Ирээдүйн өдөр', before: 'Системийн эхлэлээс өмнө' }[st];
@@ -300,7 +301,7 @@ function settingsView() {
           return;
         }
         if (act === 'backup') {
-          const data = { exportedAt: new Date().toISOString(), config: state.config, workers: state.workers, days: state.days, offDays: state.offDays, debts: state.debts };
+          const data = { exportedAt: new Date().toISOString(), config: state.config, workers: state.workers, days: state.days, offDays: state.offDays, debts: state.debts, purchases: state.purchases };
           const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
           const a = document.createElement('a'); a.href = url; a.download = `tsalin-backup-${todayStr()}.json`; a.click(); URL.revokeObjectURL(url);
           toast('Нөөц хуулбар татагдлаа'); return;
@@ -355,11 +356,12 @@ const ITEMS = [
   { id: 'dash', label: 'Хяналт', short: 'Хяналт', icon: 'gauge' },
   { id: 'summary', label: 'Нэгтгэл · Excel', short: 'Нэгтгэл', icon: 'table' },
   { id: 'calendar', label: 'Календарь', short: 'Календарь', icon: 'calendar' },
+  { id: 'buy', label: 'Худалдан авалт', short: 'Авалт', icon: 'cart' },
   { id: 'workers', label: 'Ажилчид', short: 'Ажилчид', icon: 'users' },
   { id: 'audit', label: 'Түүх', short: 'Түүх', icon: 'file' },
   { id: 'settings', label: 'Тохиргоо', short: 'Тохиргоо', icon: 'settings' }
 ];
-const factories = { dash: dashboardView, summary: summaryView, calendar: calendarView, workers: workersView, audit: auditView, settings: settingsView };
+const factories = { dash: dashboardView, summary: summaryView, calendar: calendarView, buy: () => purchasesView({ admin: true }), workers: workersView, audit: auditView, settings: settingsView };
 const views = {}, panes = {};
 let shell = null, current = 'dash', seeded = false, adminOk = null, checking = false;
 
@@ -408,7 +410,12 @@ let raf = 0;
 store.onChange(() => {
   cancelAnimationFrame(raf);
   raf = requestAnimationFrame(async () => {
-    if (!state.authReady) { app.innerHTML = '<div class="login-wrap"><div class="muted">Ачаалж байна…</div></div>'; return; }
+    if (!state.authReady) {
+      app.innerHTML = state.error
+        ? `<div class="login-wrap"><div class="login"><div class="logo">ЦС</div><h1>Firebase-тэй холбогдож чадсангүй</h1><p>${esc(state.error.code || state.error.message || String(state.error))}</p><p class="hint">firebase-config.js дахь утгууд (apiKey, authDomain, projectId, appId) зөв эсэхийг шалгаад дахин ачаална уу. Дэлгэрэнгүйг F12 → Console-оос харна.</p></div></div>`
+        : '<div class="login-wrap"><div class="muted">Ачаалж байна…</div></div>';
+      return;
+    }
     if (!state.user) { if (shell || !document.getElementById('lf')) { shell = null; loginScreen(app, { title: 'Админ нэвтрэх', sub: 'Цалингийн системийн удирдлага', signIn: store.signIn }); } return; }
     if (adminOk === null) {
       if (!checking) {
