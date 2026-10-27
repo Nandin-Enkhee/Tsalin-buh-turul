@@ -5,7 +5,7 @@ import {
   esc, icon, toast, confirmBox, initTheme, mountShell, banner, needOnline, loginScreen,
   monthRibbon, ribbonLegend, scrollRibbonToToday, missingDays
 } from './ui.js';
-import { summaryView, purchasesView, animalTable } from './views-shared.js';
+import { summaryView, purchasesView, animalTable, bindAnimalDetail } from './views-shared.js';
 
 const { state } = store;
 const app = document.getElementById('app');
@@ -57,6 +57,7 @@ function dashboardView() {
     if (document.activeElement !== af) af.value = A.from;
     if (document.activeElement !== at) at.value = A.to;
     root.querySelector('#aLabel').textContent = A.manual ? 'Гараар сонгосон хугацаа' : monthLabel(S.ym);
+    if (!root._abound) { root._abound = true; bindAnimalDetail(root.querySelector('#aBody'), () => A); }
     root.querySelector('#aBody').innerHTML = animalTable(buildAnimalStats({ days: state.days, purchases: state.purchases, config: state.config, from: A.from, to: A.to }));
     const pend = state.requests.filter(r => r.status === 'pending' || r.status === 'approved').sort((a, b) => a.date.localeCompare(b.date));
     root.querySelector('#reqs').innerHTML = pend.length ? `<div class="card-head"><div><h2>Засах хүсэлтүүд</h2><p class="sub">Нягтлангаас ирсэн. Зөвшөөрвөл нягтлан тухайн өдрийг нэг удаа засах/устгаж чадна.</p></div></div>
