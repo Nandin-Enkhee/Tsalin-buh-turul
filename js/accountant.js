@@ -331,20 +331,30 @@ function entryView() {
 /* ================================ СУУТГАЛ ================================ */
 function debtsView() {
   const dst = d => state.requests.find(r => r.id === 'debt_' + d.id)?.status;
-  const F = { status: 'all', wid: 'all' };
+  const F = { status: 'all', wid: 'all', ym: '' };
+  const SEL = new Set();
   let root;
   function drawTable() {
     let list = [...state.debts].sort((a, b) => b.date.localeCompare(a.date));
     if (F.status !== 'all') list = list.filter(d => (F.status === 'paid') === !!d.paid);
     if (F.wid !== 'all') list = list.filter(d => d.wid === F.wid);
-    const open = state.debts.filter(d => !d.paid).reduce((s, d) => s + d.amt, 0);
-    root.querySelector('#dSum').textContent = `Төлөгдөөгүй нийт: ${fmt(open)} ₮`;
+    if (F.ym) list = list.filter(d => d.date.startsWith(F.ym));
+    const base = state.debts.filter(d => (F.wid === 'all' || d.wid === F.wid) && (!F.ym || d.date.startsWith(F.ym)));
+    const sumOf = a => a.reduce((s, d) => s + d.amt, 0);
+    const open = base.filter(d => !d.paid), paid = base.filter(d => d.paid);
+    root.querySelector('#dSum').innerHTML = `${F.ym ? F.ym.replace('-', '.') + ' · ' : 'Бүх хугацаа · '}Төлөөгүй: <b>${fmt(sumOf(open))} ₮</b> (${open.length}) · Төлсөн: <b>${fmt(sumOf(paid))} ₮</b> (${paid.length}) · Нийт: <b>${fmt(sumOf(base))} ₮</b>`;
+    [...SEL].forEach(id => { if (!list.some(d => d.id === id)) SEL.delete(id); });
+    const selList = list.filter(d => SEL.has(d.id));
+    root.querySelector('#dBulk').innerHTML = `<span class="muted">Сонгосон: <b>${selList.length}</b> · ${fmt(sumOf(selList))} ₮</span>
+      <button class="btn btn-secondary btn-sm" data-bulk="paid" ${selList.length ? '' : 'disabled'}>Төлсөн болгох</button>
+      <button class="btn btn-secondary btn-sm" data-bulk="open" ${selList.length ? '' : 'disabled'}>Цуцлах (төлөөгүй болгох)</button>`;
+    root.querySelector('#dAll').checked = list.length > 0 && selList.length === list.length;
     root.querySelector('#dBody').innerHTML = list.length ? list.map(d => `<tr>
-      <td>${d.date}</td><td>${esc(d.name)}</td><td>${esc(d.type)}${d.note ? `<div class="faint" style="font-size:12px">${esc(d.note)}</div>` : ''}</td>
+      <td><input type="checkbox" data-sel="${esc(d.id)}" ${SEL.has(d.id) ? 'checked' : ''} aria-label="Сонгох"></td><td>${d.date}</td><td>${esc(d.name)}</td><td>${esc(d.type)}${d.note ? `<div class="faint" style="font-size:12px">${esc(d.note)}</div>` : ''}</td>
       <td class="num">${fmt(d.amt)}</td><td><span class="chip ${d.paid ? 'ok' : 'warn'}">${d.paid ? 'Төлсөн' : 'Төлөөгүй'}</span></td>
       <td class="num"><button class="btn btn-secondary btn-sm" data-pay="${esc(d.id)}">${d.paid ? 'Буцаах' : 'Төлсөн болгох'}</button>
         <button class="btn btn-ghost btn-sm" data-del="${esc(d.id)}" aria-label="Устгах" title="${dst(d) === 'approved' ? 'Админ зөвшөөрсөн — устгах' : dst(d) === 'pending' ? 'Хүсэлт хүлээгдэж байна' : 'Устгах хүсэлт илгээх'}">${icon('trash')}${dst(d) === 'approved' ? ' <small>Зөвшөөрсөн</small>' : dst(d) === 'pending' ? ' <small>Хүлээгдэж буй</small>' : ''}</button></td></tr>`).join('')
-      : `<tr><td colspan="6" class="empty">Суутгал бүртгэгдээгүй байна.</td></tr>`;
+      : `<tr><td colspan="7" class="empty">Суутгал бүртгэгдээгүй байна.</td></tr>`;
   }
   return {
     title: 'Суутгал',
@@ -362,12 +372,35 @@ function debtsView() {
           </div><div class="mt"><button class="btn btn-primary" data-act="add">${icon('plus')} Бүртгэх</button></div></div>
         <div class="card"><div class="card-head"><div><h2>Бүртгэлтэй суутгалууд</h2><p class="sub" id="dSum"></p></div>
           <div class="row"><select class="inp sm" data-f="status"><option value="all">Бүгд</option><option value="open">Төлөөгүй</option><option value="paid">Төлсөн</option></select>
-          <select class="inp sm" data-f="wid" id="dF"></select></div></div>
-          <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Огноо</th><th>Ажилтан</th><th>Төрөл</th><th class="num">Дүн (₮)</th><th>Төлөв</th><th></th></tr></thead><tbody id="dBody"></tbody></table></div>
-          <p class="hint">«Төлсөн» гэж тэмдэглэсэн суутгал цалингаас хасагдахаа болино.</p></div>`;
-      root.addEventListener('change', e => { const f = e.target.dataset.f; if (f) { F[f] = e.target.value; drawTable(); } });
+          <select class="inp sm" data-f="wid" id="dF"></select>
+          <input class="inp sm" type="month" data-f="ym" title="Он-сар сонгох" aria-label="Он-сар"><button class="btn btn-ghost btn-sm" data-act="allym">Бүх хугацаа</button></div></div>
+          <div class="row" id="dBulk" style="flex-wrap:wrap;gap:8px;margin:8px 0"></div>
+          <div class="tbl-wrap"><table class="tbl"><thead><tr><th><input type="checkbox" id="dAll" aria-label="Бүгдийг сонгох"></th><th>Огноо</th><th>Ажилтан</th><th>Төрөл</th><th class="num">Дүн (₮)</th><th>Төлөв</th><th></th></tr></thead><tbody id="dBody"></tbody></table></div>
+          <p class="hint">«Төлсөн» гэж тэмдэглэсэн суутгал цалингаас хасагдахаа болино. Олон суутгалыг тэмдэглээд нэг дор «Төлсөн болгох» эсвэл «Цуцлах» боломжтой.</p></div>`;
+      root.addEventListener('change', e => {
+        const t = e.target;
+        if (t.id === 'dAll') {
+          const vis = [...root.querySelectorAll('[data-sel]')].map(x => x.dataset.sel);
+          vis.forEach(id => t.checked ? SEL.add(id) : SEL.delete(id)); drawTable(); return;
+        }
+        if (t.dataset.sel) { t.checked ? SEL.add(t.dataset.sel) : SEL.delete(t.dataset.sel); drawTable(); return; }
+        const f = t.dataset.f; if (f) { F[f] = t.value; SEL.clear(); drawTable(); }
+      });
       root.addEventListener('click', async e => {
         const t = e.target;
+        if (t.closest('[data-act=allym]')) { F.ym = ''; root.querySelector('[data-f=ym]').value = ''; SEL.clear(); drawTable(); return; }
+        const bk = t.closest('[data-bulk]');
+        if (bk) {
+          if (!needOnline()) return;
+          const paidVal = bk.dataset.bulk === 'paid';
+          const ids = [...SEL].map(id => state.debts.find(d => d.id === id)).filter(d => d && !!d.paid !== paidVal);
+          if (!ids.length) { toast(paidVal ? 'Сонгосон суутгал аль хэдийн төлсөн' : 'Сонгосон суутгал төлөөгүй байна'); return; }
+          const tot = ids.reduce((a, d) => a + d.amt, 0);
+          if (!(await confirmBox(paidVal ? 'Төлсөн болгох' : 'Суутгал цуцлах', `${ids.length} суутгал (нийт ${fmt(tot)}₮) ${paidVal ? '«төлсөн» болно. Цалингаас хасагдахаа болино.' : '«төлөөгүй» болж, дахин цалингаас хасагдана.'}`, paidVal ? 'Төлсөн болгох' : 'Цуцлах'))) return;
+          try { for (const d of ids) await store.updateDebt(d.id, { paid: paidVal }); SEL.clear(); toast(`${ids.length} суутгал шинэчлэгдлээ`); }
+          catch (er) { console.error(er); toast('Хадгалж чадсангүй: ' + (er.code || er.message), 'bad'); }
+          return;
+        }
         if (t.closest('[data-act=add]')) {
           if (!needOnline()) return;
           const wid = root.querySelector('#dW').value, amt = +root.querySelector('#dA').value;
