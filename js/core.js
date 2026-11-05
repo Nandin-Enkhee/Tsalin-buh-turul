@@ -133,7 +133,7 @@ export function posIndex(config) {
 /**
  * speciesId: 'all' эсвэл тодорхой id. 'all' үед суутгал тооцно.
  */
-export function buildSummary({ days, debts, config, from, to, speciesId }) {
+export function buildSummary({ days, debts, config, from, to, speciesId, dFrom = from, dTo = to }) {
   const dates = dateRange(from, to);
   const per = new Map();
   days.filter(d => d.date >= from && d.date <= to && (speciesId === 'all' || d.speciesId === speciesId)).forEach(d => {
@@ -148,7 +148,7 @@ export function buildSummary({ days, debts, config, from, to, speciesId }) {
   const pi = posIndex(config);
   const rows = [...per.values()].map(p => {
     const sum = t => speciesId === 'all'
-      ? debts.filter(q => q.wid === p.wid && q.type === t && !q.paid && q.date >= from && q.date <= to).reduce((s, q) => s + q.amt, 0)
+      ? debts.filter(q => q.wid === p.wid && q.type === t && !q.paid && q.date >= dFrom && q.date <= dTo).reduce((s, q) => s + q.amt, 0)
       : 0;
     const clothes = sum('Хувцас'), store = sum('Дэлгүүр тооцоо'), adv = sum('Урьдчилгаа');
     return { ...p, workedDays: p.worked.size, clothes, store, adv, net: p.total - clothes - store - adv };
@@ -160,7 +160,7 @@ export function buildSummary({ days, debts, config, from, to, speciesId }) {
 }
 
 /** Нэг ажилтны цалингийн хуудас */
-export function buildPayslip({ wid, days, debts, from, to }) {
+export function buildPayslip({ wid, days, debts, from, to, dFrom = from, dTo = to }) {
   const lines = [];
   days.filter(d => d.date >= from && d.date <= to).sort((a, b) => a.date.localeCompare(b.date)).forEach(d => {
     (d.rows || []).filter(r => r.wid === wid).forEach(r => {
@@ -168,7 +168,7 @@ export function buildPayslip({ wid, days, debts, from, to }) {
     });
   });
   const total = lines.reduce((s, l) => s + l.amt, 0);
-  const deductions = debts.filter(q => q.wid === wid && !q.paid && q.date >= from && q.date <= to);
+  const deductions = debts.filter(q => q.wid === wid && !q.paid && q.date >= dFrom && q.date <= dTo);
   const ded = deductions.reduce((s, q) => s + q.amt, 0);
   return { lines, total, deductions, ded, net: total - ded, workedDays: new Set(lines.map(l => l.date)).size };
 }
