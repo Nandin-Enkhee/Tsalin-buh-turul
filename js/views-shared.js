@@ -14,6 +14,16 @@ function defaultPeriod() {
   const t = todayStr(), ym = monthOf(t);
   return halfMonth(ym, +t.slice(8) > 15);
 }
+
+/** Суутгалын хугацаа: цалингийн хугацаатай ижил (анхдагч) эсвэл тусад нь сонгосон. */
+const dedRange = S => S.dOn && S.dFrom && S.dTo ? { dFrom: S.dFrom, dTo: S.dTo } : { dFrom: S.from, dTo: S.to };
+const dedBox = S => `<div class="mt" style="border-top:1px dashed var(--line,#8884);padding-top:12px">
+  <label class="row" style="gap:8px;cursor:pointer"><input type="checkbox" data-f="dOn" ${S.dOn ? 'checked' : ''}> <b>Суутгалыг өөр хугацаагаар хасах</b></label>
+  <p class="hint" style="margin:4px 0 8px">Сонгохгүй бол цалингийн хугацаанд бүртгэсэн суутгалыг хасна. Жишээ нь цалин 10/16–10/31, суутгал 10/10–11/05.</p>
+  <div class="fgrid" ${S.dOn ? '' : 'hidden'} id="dedFields">
+    <div><label class="f">Суутгал: эхлэх</label><input class="inp" type="date" data-f="dFrom" value="${S.dFrom || ''}"></div>
+    <div><label class="f">Суутгал: дуусах</label><input class="inp" type="date" data-f="dTo" value="${S.dTo || ''}"></div>
+    <div><label class="f">Он-сар сонгох (суутгал)</label><input class="inp" type="month" data-f="dMonth" value=""></div></div></div>`;
 const spName = id => state.config.species.find(s => s.id === id)?.name || id;
 
 /** Малын тоо (орсон + худалдан авсан) хүснэгтийн HTML. Нийт нийлбэр зориуд оруулаагүй — төрөл тус бүрээр. */
@@ -48,7 +58,7 @@ export function bindAnimalDetail(box, getRange) {
 
 /* =============================== НЭГТГЭЛ =============================== */
 export function summaryView() {
-  const S = { ...defaultPeriod(), sp: 'all' };
+  const S = { ...defaultPeriod(), sp: 'all', dOn: false, dFrom: '', dTo: '' };
   let root;
 
   function quick(kind) {
@@ -67,7 +77,7 @@ export function summaryView() {
     const box = root.querySelector('#sumTbl');
     const an = buildAnimalStats({ days: state.days, purchases: state.purchases, config: state.config, from: S.from, to: S.to }).filter(x => S.sp === 'all' || x.id === S.sp);
     root.querySelector('#animalBox').innerHTML = `<div class="card-head"><div><h2>Малын тоо</h2><p class="sub">${S.from.replaceAll('-', '.')} – ${S.to.replaceAll('-', '.')} хугацаанд орсон мал болон гаднаас худалдан авсан.</p></div></div>${animalTable(an)}`;
-    const sum = buildSummary({ days: state.days, debts: state.debts, config: state.config, from: S.from, to: S.to, speciesId: S.sp });
+    const sum = buildSummary({ days: state.days, debts: state.debts, config: state.config, from: S.from, to: S.to, speciesId: S.sp, ...dedRange(S) });
     const all = S.sp === 'all';
     if (!sum.rows.length) {
       box.innerHTML = `<div class="tbl-wrap"><table class="tbl"><tbody><tr><td class="empty">Энэ хугацаанд баталгаажсан цалин алга.</td></tr></tbody></table></div>`;
@@ -95,7 +105,24 @@ export function summaryView() {
     h += all
       ? `<p class="hint">«Бүгд» харагдац дээр өр суутгал тооцогдож «Нийт олгох» дүн гарна. Төлсөн гэж тэмдэглэсэн суутгал хасагдахгүй.</p>`
       : `<p class="hint">Тухайн малын төрлийн цалин л харагдана. Ажилтан хоёр төрөлд ажилласан бол суутгалыг давхардуулахгүйн тулд «Бүгд» харагдацаас үз.</p>`;
+    const dr = dedRange(S);
+    const openCnt = state.debts.filter(q => !q.paid && q.date >= dr.dFrom && q.date <= dr.dTo && sum.rows.some(r => r.wid === q.wid)).length;
+    h += `<div class="row mt" style="flex-wrap:wrap;gap:8px"><span class="muted">Хасагдсан суутгалын хугацаа: <b>${dr.dFrom.replaceAll('-', '.')} – ${dr.dTo.replaceAll('-', '.')}</b></span><span class="grow"></span>
+      ${all && openCnt ? `<button class="btn btn-secondary btn-sm" data-act="markpaid">Эдгээр ${openCnt} суутгалыг «төлсөн» болгох</button>` : ''}</div>`;
     box.innerHTML = h;
+  }
+
+  async function markPaid() {
+    if (!needOnline()) return;
+    const dr = dedRange(S);
+    const sum = buildSummary({ days: state.days, debts: state.debts, config: state.config, from: S.from, to: S.to, speciesId: 'all', ...dr });
+    const ids = new Set(sum.rows.map(r => r.wid));
+    const list = state.debts.filter(q => !q.paid && q.date >= dr.dFrom && q.date <= dr.dTo && ids.has(q.wid));
+    if (!list.length) { toast('Төлсөн болгох суутгал алга'); return; }
+    const tot = list.reduce((a, q) => a + q.amt, 0);
+    if (!(await confirmBox('Суутгал төлсөн болгох', `${dr.dFrom.replaceAll('-', '.')} – ${dr.dTo.replaceAll('-', '.')} хугацааны ${list.length} суутгал (нийт ${fmt(tot)}₮) «төлсөн» болно. Цалинг олгосны дараа л хий. Дараа нь Суутгал хэсгээс буцааж болно.`, 'Төлсөн болгох'))) return;
+    try { for (const q of list) await store.updateDebt(q.id, { paid: true }); toast(`${list.length} суутгал төлсөн болгогдлоо`); }
+    catch (er) { console.error(er); toast('Хадгалж чадсангүй: ' + (er.code || er.message), 'bad'); }
   }
 
   function exportXlsx() {
@@ -103,11 +130,11 @@ export function summaryView() {
     const wb = XLSX.utils.book_new();
     const wk = Object.fromEntries(state.workers.map(w => [w.id, w]));
     const make = (speciesId, sheetName) => {
-      const sum = buildSummary({ days: state.days, debts: state.debts, config: state.config, from: S.from, to: S.to, speciesId });
+      const sum = buildSummary({ days: state.days, debts: state.debts, config: state.config, from: S.from, to: S.to, speciesId, ...dedRange(S) });
       if (!sum.rows.length) return false;
       const all = speciesId === 'all';
       const label = all ? 'бүх мал' : spName(speciesId);
-      const aoa = [[state.config.companyName], [`Цалин хөлсний тайлан ${S.from.replaceAll('-', '.')} – ${S.to.replaceAll('-', '.')} (${label})`], []];
+      const aoa = [[state.config.companyName], [`Цалин хөлсний тайлан ${S.from.replaceAll('-', '.')} – ${S.to.replaceAll('-', '.')} (${label})${S.dOn ? ` · Суутгал: ${dedRange(S).dFrom.replaceAll('-', '.')} – ${dedRange(S).dTo.replaceAll('-', '.')}` : ''}`], []];
       aoa.push(['Д/Д', 'Ажилчдын нэрс', 'Албан тушаал', ...sum.dates.map(shortDate), 'Ажилласан өдөр', 'Нийт дүн',
         ...(all ? ['Өр суутгал хувцас', 'Дэлгүүр тооцоо', 'Урьдчилж олгосон дүн', 'Нийт олгох'] : []), 'Утас', 'Данс']);
       const dayTot = {};
@@ -153,8 +180,10 @@ export function summaryView() {
           <div class="fgrid">
             <div><label class="f">Эхлэх огноо</label><input class="inp" type="date" data-f="from" value="${S.from}"></div>
             <div><label class="f">Дуусах огноо</label><input class="inp" type="date" data-f="to" value="${S.to}"></div>
+            <div><label class="f">Он-сар сонгох (цалин)</label><input class="inp" type="month" data-f="sMonth" value=""></div>
             <div><label class="f">Малын төрөл</label><select class="inp" data-f="sp"></select></div>
           </div>
+          ${dedBox(S)}
           <div class="row mt">
             <button class="btn btn-secondary btn-sm" data-q="h1">Энэ сарын 1–15</button>
             <button class="btn btn-secondary btn-sm" data-q="h2">Энэ сарын 16–сарын эцэс</button>
@@ -168,10 +197,20 @@ export function summaryView() {
         <div class="card" id="sumTbl"></div>`;
       root.addEventListener('change', e => {
         const f = e.target.dataset.f; if (!f) return;
-        S[f] = e.target.value; draw();
+        if (f === 'dOn') {
+          S.dOn = e.target.checked; root.querySelector('#dedFields').hidden = !S.dOn;
+          if (S.dOn && !S.dFrom) { S.dFrom = S.from; S.dTo = S.to; root.querySelector('[data-f=dFrom]').value = S.dFrom; root.querySelector('[data-f=dTo]').value = S.dTo; }
+        } else if (f === 'sMonth' || f === 'dMonth') {
+          const ym = e.target.value; if (!ym) return;
+          const r = { from: `${ym}-01`, to: monthRange(ym).to };
+          if (f === 'sMonth') { S.from = r.from; S.to = r.to; root.querySelector('[data-f=from]').value = S.from; root.querySelector('[data-f=to]').value = S.to; }
+          else { S.dFrom = r.from; S.dTo = r.to; root.querySelector('[data-f=dFrom]').value = S.dFrom; root.querySelector('[data-f=dTo]').value = S.dTo; }
+        } else S[f] = e.target.value;
+        draw();
       });
       root.addEventListener('click', e => {
         const q = e.target.closest('[data-q]'); if (q) quick(q.dataset.q);
+        if (e.target.closest('[data-act=markpaid]')) markPaid();
         if (e.target.closest('[data-act=xlsx]')) exportXlsx();
       });
       this.refresh();
@@ -187,7 +226,7 @@ export function summaryView() {
 
 /* ============================ ЦАЛИНГИЙН ХУУДАС ============================ */
 export function payslipView() {
-  const S = { ...defaultPeriod(), wid: '' };
+  const S = { ...defaultPeriod(), wid: '', dOn: false, dFrom: '', dTo: '' };
   let root;
 
   function people() {
@@ -201,7 +240,7 @@ export function payslipView() {
     const box = root.querySelector('#slip');
     const p = people().find(x => x.id === S.wid);
     if (!p) { box.innerHTML = `<div class="card muted">Цалингийн хуудас харахын тулд ажилтнаа сонгоно уу.</div>`; return; }
-    const s = buildPayslip({ wid: p.id, days: state.days, debts: state.debts, from: S.from, to: S.to });
+    const s = buildPayslip({ wid: p.id, days: state.days, debts: state.debts, from: S.from, to: S.to, ...dedRange(S) });
     box.innerHTML = `<div class="slip print-area">
       <h2>${esc(state.config.companyName)}</h2>
       <div style="color:#555">Цалингийн хуудас · ${S.from.replaceAll('-', '.')} – ${S.to.replaceAll('-', '.')}</div>
@@ -228,9 +267,16 @@ export function payslipView() {
           <div><label class="f">Ажилтан</label><select class="inp" data-f="wid"></select></div>
           <div><label class="f">Эхлэх огноо</label><input class="inp" type="date" data-f="from" value="${S.from}"></div>
           <div><label class="f">Дуусах огноо</label><input class="inp" type="date" data-f="to" value="${S.to}"></div></div>
+          ${dedBox(S)}
           <div class="row mt"><button class="btn btn-primary" data-act="print">${icon('print')} Хэвлэх</button></div></div>
         <div id="slip"></div>`;
-      root.addEventListener('change', e => { const f = e.target.dataset.f; if (!f) return; S[f] = e.target.value; draw(); });
+      root.addEventListener('change', e => {
+        const f = e.target.dataset.f; if (!f) return;
+        if (f === 'dOn') { S.dOn = e.target.checked; root.querySelector('#dedFields').hidden = !S.dOn; if (S.dOn && !S.dFrom) { S.dFrom = S.from; S.dTo = S.to; root.querySelector('[data-f=dFrom]').value = S.dFrom; root.querySelector('[data-f=dTo]').value = S.dTo; } }
+        else if (f === 'dMonth') { const ym = e.target.value; if (!ym) return; S.dFrom = `${ym}-01`; S.dTo = monthRange(ym).to; root.querySelector('[data-f=dFrom]').value = S.dFrom; root.querySelector('[data-f=dTo]').value = S.dTo; }
+        else S[f] = e.target.value;
+        draw();
+      });
       root.addEventListener('click', e => { if (e.target.closest('[data-act=print]')) { if (!S.wid) { toast('Ажилтан сонгоно уу', 'bad'); return; } window.print(); } });
       this.refresh();
     },
